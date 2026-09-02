@@ -9,9 +9,7 @@ from .config import get_settings
 async def submit_video_task(image_url: str, text_content: str) -> str:
     settings = get_settings()
     url = settings.video_composer_base_url.rstrip("/") + "/api/video/generate/cloud/tasks"
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if settings.video_composer_api_key:
-        headers["Authorization"] = "Bearer " + settings.video_composer_api_key
+    headers = _video_composer_headers(content_type=True)
 
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
@@ -33,9 +31,7 @@ async def submit_video_task(image_url: str, text_content: str) -> str:
 async def get_video_task(task_id: str) -> dict[str, Any]:
     settings = get_settings()
     url = settings.video_composer_base_url.rstrip() + "/api/video/generate/cloud/tasks"
-    headers: dict[str, str] = {}
-    if settings.video_composer_api_key:
-        headers["Authorization"] = "Bearer " + settings.video_composer_api_key
+    headers = _video_composer_headers()
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(url, params={"taskId": task_id}, headers=headers)
@@ -48,6 +44,17 @@ async def get_video_task(task_id: str) -> dict[str, Any]:
     if not isinstance(task, dict):
         raise RuntimeError("Video Composer status response missing data.")
     return task
+
+
+def _video_composer_headers(content_type: bool = False) -> dict[str, str]:
+    settings = get_settings()
+    if not settings.video_composer_api_key:
+        raise RuntimeError("VIDEO_COMPOSER_API_KEY is not configured.")
+
+    headers = {"X-API-Key": settings.video_composer_api_key}
+    if content_type:
+        headers["Content-Type"] = "application/json"
+    return headers
 
 
 async def concat_videos(video_urls: list[str]) -> str:
