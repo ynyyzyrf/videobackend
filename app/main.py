@@ -1,0 +1,260 @@
+import uuid
+from typing import Any
+
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi.security import APIKeyHeader
+
+from . import db
+from .config import get_settings
+from .dify_client import create_deck_from_dify
+from .orchestrator import create_video_job, run_video_job, utc_now
+from .schemas import (
+    ReportCreate,
+    ReportOut,
+    ReportPatch,
+    ReportVersionOut,
+    VideoJobCreate,
+    VideoJobDetailOut,
+    VideoJobItemOut,
+    VideoJobOut,
+)
+
+app = FastAPI(title="Weekly Report Backend", version="0.1.0")
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def require_api_key(api_key: str | None = Depends(api_key_header)) -> None:
+    expected = get_settings().backend_api_key
+    if not expected:
+        raise HTTPException(status_code=503, detail="BACKEND_API_KEY is not configured.")
+    if api_key != expected:
+        raise HTTPException(status_code=401, detail="Invalid API key.")
+
+
+@app.on_event("startup")
+def startup() -> None:
+    db.init_db()
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/reports", response_model=ReportOut, dependencies=[Depends(require_api_key)])
+async def create_report(payload: ReportCreate) -> ReportOut:
+    report_id = "report_" + uuid.uuid4().hex
+    now = utc_now()
+    deck_json = payload.deck_json
+    source = "frontend"
+
+    if deck_json is None:
+        try:
+            deck_json = await create_deck_from_dify(
+                reporter_name=payload.reporter_name,
+                report_period=payload.report_period,
+                report_date=payload.report_date,
+                raw_content=payload.raw_content,
+                user_id="report_" + report_id,
+            )
+            source = "dify"
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    deck_json = _with_preview_images(deck_json, payload.preview_images)
+    version_id = _insert_report_with_version(report_id, payload, deck_json, source, now)
+    return _get_report_or_404(report_id, version_id)
+
+
+@app.get("/reports/{report_id}", response_model=ReportOut, dependencies=[Depends(require_api_key)])
+def get_report(report_id: str) -> ReportOut:
+    return _get_report_or_404(report_id)
+
+
+@app.patch("/reports/{report_id}", response_model=ReportOut, dependencies=[Depends(require_api_key)])
+def patch_report(report_id: str, payload: ReportPatch) -> ReportOut:
+    report = db.fetchone("SELECT * FROM reports WHERE id = %s", (report_id,))
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found.")
+
+    row = db.fetchone(
+        "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM report_versions WHERE report_id = %s",
+        (report_id,),
+    )
+    version = int((row or {}).get("next_version") or 1)
+    version_id = "rv_" + uuid.uuid4().hex
+    deck_json = _with_preview_images(payload.deck_json, payload.preview_images)
+
+    with db.connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO report_versions (id, report_id, version, deck_json, source)
+                VALUES (%s, %s, %s, CAST(%s AS JSON), %s)
+                """,
+                (version_id, report_id, version, db.dumps(deck_json), payload.source),
+            )
+            cursor.execute(
+                "UPDATE reports SET current_version_id = %s, updated_at = %s WHERE id = %s",
+                (version_id, utc_now(), report_id),
+            )
+
+    return _get_report_or_404(report_id, version_id)
+
+
+@app.post("/reports/{report_id}/video", response_model=VideoJobOut, dependencies=[Depends(require_api_key)])
+def start_video_job(
+    report_id: str,
+    payload: VideoJobCreate,
+    background_tasks: BackgroundTasks,
+) -> VideoJobOut:
+    report = _report_row(report_id)
+    version_id = payload.report_version_id or report["current_version_id"]
+    version = _version_row(str(version_id))
+    deck_json = db.loads(version["deck_json"])
+
+    try:
+        job_id = create_video_job(report_id, str(version_id), deck_json)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    background_tasks.add_task(run_video_job, job_id)
+    return _get_video_job_or_404(job_id)
+
+
+@app.get("/video-jobs/{job_id}", response_model=VideoJobDetailOut, dependencies=[Depends(require_api_key)])
+def get_video_job(job_id: str) -> VideoJobDetailOut:
+    return _get_video_job_or_404(job_id, include_items=True)
+
+
+def _insert_report_with_version(
+    report_id: str,
+    payload: ReportCreate,
+    deck_json: dict[str, Any],
+    source: str,
+    now: str,
+) -> str:
+    version_id = "rv_" + uuid.uuid4().hex
+    with db.connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO reports
+                (id, reporter_name, report_period, report_date, raw_content, current_version_id, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    report_id,
+                    payload.reporter_name,
+                    payload.report_period,
+                    payload.report_date,
+                    payload.raw_content,
+                    version_id,
+                    now,
+                    now,
+                ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO report_versions (id, report_id, version, deck_json, source, created_at)
+                VALUES (%s, %s, 1, CAST(%s AS JSON), %s, %s)
+                """,
+                (version_id, report_id, db.dumps(deck_json), source, now),
+            )
+    return version_id
+
+
+def _with_preview_images(
+    deck_json: dict[str, Any],
+    preview_images: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not preview_images:
+        return deck_json
+    return {**deck_json, "preview_images": preview_images}
+
+
+def _report_row(report_id: str) -> dict[str, Any]:
+    report = db.fetchone("SELECT * FROM reports WHERE id = %s", (report_id,))
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found.")
+    return report
+
+
+def _version_row(version_id: str) -> dict[str, Any]:
+    version = db.fetchone("SELECT * FROM report_versions WHERE id = %s", (version_id,))
+    if not version:
+        raise HTTPException(status_code=404, detail="Report version not found.")
+    return version
+
+
+def _get_report_or_404(report_id: str, version_id: str | None = None) -> ReportOut:
+    report = db.fetchone("SELECT * FROM reports WHERE id = %s", (report_id,))
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found.")
+
+    target_version_id = version_id or report["current_version_id"]
+    version = (
+        db.fetchone("SELECT * FROM report_versions WHERE id = %s", (str(target_version_id),))
+        if target_version_id
+        else None
+    )
+
+    current_version = None
+    if version:
+        current_version = ReportVersionOut(
+            id=version["id"],
+            version=int(version["version"]),
+            deck_json=db.loads(version["deck_json"]),
+            source=version["source"],
+            created_at=str(version["created_at"]),
+        )
+    return ReportOut(
+        id=report["id"],
+        reporter_name=report["reporter_name"],
+        report_period=report["report_period"],
+        report_date=report["report_date"],
+        raw_content=report["raw_content"],
+        current_version=current_version,
+        created_at=str(report["created_at"]),
+        updated_at=str(report["updated_at"]),
+    )
+
+
+def _get_video_job_or_404(job_id: str, include_items: bool = False) -> Any:
+    job = db.fetchone("SELECT * FROM video_jobs WHERE id = %s", (job_id,))
+    if not job:
+        raise HTTPException(status_code=404, detail="Video job not found.")
+
+    base = {
+        "id": job["id"],
+        "report_id": job["report_id"],
+        "report_version_id": job["report_version_id"],
+        "status": job["status"],
+        "progress": int(job["progress"]),
+        "total": int(job["total"]),
+        "completed": int(job["completed"]),
+        "final_video_url": job["final_video_url"],
+        "error": job["error"],
+    }
+    if not include_items:
+        return VideoJobOut(**base)
+
+    rows = db.fetchall(
+        "SELECT * FROM video_job_items WHERE job_id = %s ORDER BY slide_index",
+        (job_id,),
+    )
+    return VideoJobDetailOut(
+        **base,
+        items=[
+            VideoJobItemOut(
+                slide_index=int(row["slide_index"]),
+                slide_type=row["slide_type"],
+                status=row["status"],
+                task_id=row["task_id"],
+                video_url=row["video_url"],
+                error=row["error"],
+                attempts=int(row["attempts"]),
+            )
+            for row in rows
+        ],
+    )
