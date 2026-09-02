@@ -52,19 +52,50 @@ async def create_deck_from_dify(
             "report_date": report_date,
         },
         "query": raw_content,
-        "response_mode": "blocking",
+        "response_mode": "streaming",
         "conversation_id": "",
         "user": user_id,
     }
     headers = {"Authorization": "Bearer " + settings.dify_api_key}
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        response = await client.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-
-    answer = str(data.get("answer") or "")
+    answer = await _stream_dify_answer(url, payload, headers)
     return extract_deck_json(answer)
+
+
+async def _stream_dify_answer(
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+) -> str:
+    chunks: list[str] = []
+    async with httpx.AsyncClient(timeout=180) as client:
+        async with client.stream("POST", url, json=payload, headers=headers) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                chunk = _parse_dify_stream_line(line)
+                if chunk is None:
+                    continue
+                if chunk.get("event") == "error":
+                    message = chunk.get("message") or chunk.get("code") or "Dify stream error"
+                    raise RuntimeError(str(message))
+                answer = chunk.get("answer")
+                if isinstance(answer, str):
+                    chunks.append(answer)
+    return "".join(chunks)
+
+
+def _parse_dify_stream_line(line: str) -> dict[str, Any] | None:
+    value = line.strip()
+    if not value or not value.startswith("data:"):
+        return None
+    raw = value[5:].strip()
+    if not raw or raw == "[DONE]":
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 async def revise_deck_from_dify(
