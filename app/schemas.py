@@ -15,7 +15,7 @@ class ReportCreate(BaseModel):
 class ReportPatch(BaseModel):
     deck_json: dict[str, Any]
     preview_images: list[dict[str, Any]] = Field(default_factory=list)
-    source: Literal["frontend_edit", "dify_revision"] = "frontend_edit"
+    source: Literal["frontend_edit", "dify_revision", "ppt2video_frontend_editor"] = "frontend_edit"
 
 
 class ReportVersionOut(BaseModel):

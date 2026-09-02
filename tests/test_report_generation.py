@@ -3,7 +3,7 @@ import asyncio
 from fastapi import BackgroundTasks
 
 from app import main
-from app.schemas import ReportCreate, ReportOut
+from app.schemas import ReportCreate, ReportOut, ReportPatch
 
 
 def _payload() -> ReportCreate:
@@ -101,3 +101,12 @@ def test_generate_report_deck_marks_report_failed(monkeypatch):
     asyncio.run(main.generate_report_deck("report_1", _payload()))
 
     assert marks == [("report_1", "failed", "Dify timeout", None)]
+
+
+def test_report_patch_accepts_legacy_frontend_source():
+    patch = ReportPatch(
+        deck_json={"slides": []},
+        source="ppt2video_frontend_editor",
+    )
+
+    assert patch.source == "ppt2video_frontend_editor"
