@@ -48,6 +48,27 @@ copy .env.example .env
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8010
 ```
 
+## Zeabur
+
+Deploy from the GitHub repository. The service command is defined in `Procfile`:
+
+```text
+uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8010}
+```
+
+Zeabur should expose the platform-provided HTTP port. The app listens on `PORT`
+inside the container and falls back to `8010` only for local/manual runs.
+
+Required environment variables:
+
+```text
+DATABASE_URL=
+BACKEND_API_KEY=
+DIFY_API_KEY=
+VIDEO_COMPOSER_API_KEY=
+FFMPEG_API_KEY=
+```
+
 ## MySQL
 
 This backend is configured for MySQL, not SQLite.
