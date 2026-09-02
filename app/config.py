@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     app_port: int = 8010
     database_url: str = "mysql+pymysql://weekly_report:change_me@127.0.0.1:3306/weekly_report?charset=utf8mb4"
     backend_api_key: str = ""
+    public_base_url: str = ""
+    asset_storage_dir: str = "/data/assets"
 
     dify_api_base: str = "https://ai-dashboard.solarifyai.com/v1"
     dify_api_key: str = ""

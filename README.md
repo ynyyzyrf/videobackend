@@ -67,10 +67,30 @@ Required environment variables:
 ```text
 DATABASE_URL=
 BACKEND_API_KEY=
+PUBLIC_BASE_URL=
 DIFY_API_KEY=
 VIDEO_COMPOSER_API_KEY=
 FFMPEG_API_KEY=
 ```
+
+`PUBLIC_BASE_URL` should be the public HTTPS URL of this backend, for example
+the Zeabur domain or a custom API domain. It is used to turn locally persisted
+preview images into stable URLs for Video Composer.
+
+## Temporary Local Asset Storage
+
+Until object storage is introduced, preview images are downloaded into
+`/data/assets` and served from `/assets/...`.
+
+On Zeabur, add persistent storage mounted at:
+
+```text
+/data
+```
+
+This is a transitional setup. Container rebuilds or multiple replicas may lose
+or desynchronize local files if the persistent volume is not mounted. Move these
+assets to object storage before heavy production use.
 
 ## MySQL
 

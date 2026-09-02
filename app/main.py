@@ -1,10 +1,13 @@
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.security import APIKeyHeader
+from fastapi.staticfiles import StaticFiles
 
 from . import db
+from .asset_store import persist_preview_assets
 from .config import get_settings
 from .dify_client import create_deck_from_dify
 from .orchestrator import create_video_job, run_video_job, utc_now
@@ -22,6 +25,8 @@ from .schemas import (
 app = FastAPI(title="Weekly Report Backend", version="0.1.0")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 startup_db_error: str | None = None
+Path(get_settings().asset_storage_dir).mkdir(parents=True, exist_ok=True)
+app.mount("/assets", StaticFiles(directory=get_settings().asset_storage_dir), name="assets")
 
 
 def ensure_db_ready() -> None:
@@ -78,7 +83,10 @@ async def create_report(payload: ReportCreate) -> ReportOut:
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    deck_json = _with_preview_images(deck_json, payload.preview_images)
+    try:
+        deck_json, _ = await persist_preview_assets(deck_json, payload.preview_images, report_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Preview asset persistence failed.") from exc
     version_id = _insert_report_with_version(report_id, payload, deck_json, source, now)
     return _get_report_or_404(report_id, version_id)
 
@@ -97,7 +105,7 @@ def get_report(report_id: str) -> ReportOut:
     response_model=ReportOut,
     dependencies=[Depends(require_api_key), Depends(ensure_db_ready)],
 )
-def patch_report(report_id: str, payload: ReportPatch) -> ReportOut:
+async def patch_report(report_id: str, payload: ReportPatch) -> ReportOut:
     report = db.fetchone("SELECT * FROM reports WHERE id = %s", (report_id,))
     if not report:
         raise HTTPException(status_code=404, detail="Report not found.")
@@ -108,7 +116,10 @@ def patch_report(report_id: str, payload: ReportPatch) -> ReportOut:
     )
     version = int((row or {}).get("next_version") or 1)
     version_id = "rv_" + uuid.uuid4().hex
-    deck_json = _with_preview_images(payload.deck_json, payload.preview_images)
+    try:
+        deck_json, _ = await persist_preview_assets(payload.deck_json, payload.preview_images, report_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Preview asset persistence failed.") from exc
 
     with db.connect() as conn:
         with conn.cursor() as cursor:
@@ -195,15 +206,6 @@ def _insert_report_with_version(
                 (version_id, report_id, db.dumps(deck_json), source, now),
             )
     return version_id
-
-
-def _with_preview_images(
-    deck_json: dict[str, Any],
-    preview_images: list[dict[str, Any]],
-) -> dict[str, Any]:
-    if not preview_images:
-        return deck_json
-    return {**deck_json, "preview_images": preview_images}
 
 
 def _report_row(report_id: str) -> dict[str, Any]:
