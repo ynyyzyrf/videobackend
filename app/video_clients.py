@@ -76,10 +76,7 @@ async def concat_videos(video_urls: list[str]) -> str:
         "output_files": ["output.mp4"],
         "ffmpeg_commands": [command],
     }
-    headers = {
-        "Authorization": "Bearer " + settings.ffmpeg_api_key,
-        "Content-Type": "application/json",
-    }
+    headers = _ffmpeg_headers()
 
     async with httpx.AsyncClient(timeout=300) as client:
         response = await client.post(settings.ffmpeg_api_url, headers=headers, json=payload)
@@ -92,6 +89,31 @@ async def concat_videos(video_urls: list[str]) -> str:
         data = response.json()
 
     return _extract_output_url(data)
+
+
+def _ffmpeg_headers() -> dict[str, str]:
+    settings = get_settings()
+    token = _normalize_bearer_token(settings.ffmpeg_api_key, "FFMPEG_API_KEY")
+    return {
+        "Authorization": token,
+        "Content-Type": "application/json",
+    }
+
+
+def _normalize_bearer_token(value: str, name: str) -> str:
+    token = value.strip()
+    if not token:
+        raise RuntimeError(f"{name} is not configured.")
+
+    lower = token.lower()
+    if lower.startswith("authorization:"):
+        token = token.split(":", 1)[1].strip()
+        lower = token.lower()
+    if lower.startswith("bearer "):
+        return "Bearer " + token[7:].strip()
+    if lower.startswith("bearer"):
+        return "Bearer " + token[6:].lstrip(":").strip()
+    return "Bearer " + token
 
 
 def _extract_output_url(data: Any) -> str:

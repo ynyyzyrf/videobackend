@@ -25,6 +25,25 @@ def test_video_composer_headers_require_api_key(monkeypatch):
         video_clients._video_composer_headers()
 
 
+@pytest.mark.parametrize(
+    ("raw_key", "expected"),
+    [
+        ("sk_test", "Bearer sk_test"),
+        ("Bearer sk_test", "Bearer sk_test"),
+        ("Bearer:sk_test", "Bearer sk_test"),
+        ("Authorization:Bearer sk_test", "Bearer sk_test"),
+        ("Authorization: Bearer sk_test", "Bearer sk_test"),
+    ],
+)
+def test_ffmpeg_headers_normalize_key_formats(monkeypatch, raw_key, expected):
+    monkeypatch.setattr(video_clients.get_settings(), "ffmpeg_api_key", raw_key)
+
+    headers = video_clients._ffmpeg_headers()
+
+    assert headers["Authorization"] == expected
+    assert headers["Content-Type"] == "application/json"
+
+
 def test_concat_videos_reports_invalid_ffmpeg_key(monkeypatch):
     monkeypatch.setattr(video_clients.get_settings(), "ffmpeg_api_key", "bad-key")
     original_async_client = httpx.AsyncClient
