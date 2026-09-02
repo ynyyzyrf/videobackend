@@ -3,7 +3,7 @@ import asyncio
 from fastapi import BackgroundTasks
 
 from app import main
-from app.schemas import ReportCreate, ReportOut, ReportPatch
+from app.schemas import ReportCreate, ReportOut, ReportPatch, VideoJobCreate, VideoJobOut
 
 
 def _payload() -> ReportCreate:
@@ -110,3 +110,66 @@ def test_report_patch_accepts_legacy_frontend_source():
     )
 
     assert patch.source == "ppt2video_frontend_editor"
+
+
+def test_start_video_job_ensures_slide_images(monkeypatch):
+    calls: list[tuple[str, object]] = []
+
+    def fake_report_row(report_id):
+        return {"id": report_id, "current_version_id": "rv_1"}
+
+    def fake_version_row(version_id):
+        return {
+            "id": version_id,
+            "deck_json": {"slides": [{"slide_type": "cover", "speaker_notes": "ok"}]},
+        }
+
+    def fake_ensure_slide_images(deck_json, report_id):
+        calls.append(("ensure", report_id))
+        return {
+            "slides": [
+                {
+                    "slide_type": "cover",
+                    "speaker_notes": "ok",
+                    "image_url": "https://backend.example/assets/previews/report_1/slide_0_generated.png",
+                }
+            ]
+        }
+
+    def fake_execute(query, params):
+        calls.append(("execute", params[1]))
+
+    def fake_create_video_job(report_id, version_id, deck_json):
+        calls.append(("create", deck_json["slides"][0]["image_url"]))
+        return "job_1"
+
+    def fake_get_video_job(job_id):
+        return VideoJobOut(
+            id=job_id,
+            report_id="report_1",
+            report_version_id="rv_1",
+            status="queued",
+            progress=0,
+            total=1,
+            completed=0,
+            final_video_url=None,
+            error=None,
+        )
+
+    monkeypatch.setattr(main, "_report_row", fake_report_row)
+    monkeypatch.setattr(main, "_version_row", fake_version_row)
+    monkeypatch.setattr(main, "ensure_slide_images", fake_ensure_slide_images)
+    monkeypatch.setattr(main.db, "loads", lambda value: value)
+    monkeypatch.setattr(main.db, "dumps", lambda value: "{}")
+    monkeypatch.setattr(main.db, "execute", fake_execute)
+    monkeypatch.setattr(main, "create_video_job", fake_create_video_job)
+    monkeypatch.setattr(main, "_get_video_job_or_404", fake_get_video_job)
+
+    job = main.start_video_job("report_1", VideoJobCreate(), BackgroundTasks())
+
+    assert job.id == "job_1"
+    assert calls == [
+        ("ensure", "report_1"),
+        ("execute", "rv_1"),
+        ("create", "https://backend.example/assets/previews/report_1/slide_0_generated.png"),
+    ]

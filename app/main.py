@@ -7,7 +7,7 @@ from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
 from . import db
-from .asset_store import persist_preview_assets
+from .asset_store import ensure_slide_images, persist_preview_assets
 from .config import get_settings
 from .dify_client import create_deck_from_dify
 from .orchestrator import create_video_job, run_video_job, utc_now
@@ -160,7 +160,11 @@ def start_video_job(
     if not version_id:
         raise HTTPException(status_code=409, detail="Report deck is still generating.")
     version = _version_row(str(version_id))
-    deck_json = db.loads(version["deck_json"])
+    deck_json = ensure_slide_images(db.loads(version["deck_json"]), report_id)
+    db.execute(
+        "UPDATE report_versions SET deck_json = CAST(%s AS JSON) WHERE id = %s",
+        (db.dumps(deck_json), str(version_id)),
+    )
 
     try:
         job_id = create_video_job(report_id, str(version_id), deck_json)

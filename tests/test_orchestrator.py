@@ -58,3 +58,19 @@ def test_build_video_items_can_use_preview_images_by_slide_index():
         "https://example.com/cover.png",
         "https://example.com/summary.png",
     ]
+
+
+def test_build_video_items_accepts_generated_slide_images():
+    items = build_video_items(
+        {
+            "slides": [
+                {
+                    "slide_type": "cover",
+                    "image_url": "https://backend.example/assets/previews/report_1/slide_0_generated.png",
+                    "speaker_notes": "cover note",
+                }
+            ]
+        }
+    )
+
+    assert items[0]["image_url"].endswith("slide_0_generated.png")
