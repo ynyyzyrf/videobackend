@@ -65,3 +65,32 @@ async def create_deck_from_dify(
 
     answer = str(data.get("answer") or "")
     return extract_deck_json(answer)
+
+
+async def revise_deck_from_dify(
+    *,
+    reporter_name: str,
+    report_period: str,
+    report_date: str,
+    current_deck_json: dict[str, Any],
+    revision_note: str,
+    user_id: str,
+) -> dict[str, Any]:
+    query = (
+        "請基於下面既有 deck_json 修改周報 PPT，不要重新生成一套無關內容。\n"
+        "只根據用戶修改要求調整原有頁面的文案、項目內容與 speaker_notes；"
+        "除非修改要求明確需要新增或刪除項目，否則保持原本頁數與結構。\n\n"
+        "<current_deck_json>\n"
+        f"{json.dumps(current_deck_json, ensure_ascii=False)}\n"
+        "</current_deck_json>\n\n"
+        "<revision_note>\n"
+        f"{revision_note}\n"
+        "</revision_note>"
+    )
+    return await create_deck_from_dify(
+        reporter_name=reporter_name,
+        report_period=report_period,
+        report_date=report_date,
+        raw_content=query,
+        user_id=user_id,
+    )

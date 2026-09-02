@@ -3,7 +3,14 @@ import asyncio
 from fastapi import BackgroundTasks
 
 from app import main
-from app.schemas import ReportCreate, ReportOut, ReportPatch, VideoJobCreate, VideoJobOut
+from app.schemas import (
+    ReportCreate,
+    ReportOut,
+    ReportPatch,
+    ReportRevisionCreate,
+    VideoJobCreate,
+    VideoJobOut,
+)
 
 
 def _payload() -> ReportCreate:
@@ -101,6 +108,58 @@ def test_generate_report_deck_marks_report_failed(monkeypatch):
     asyncio.run(main.generate_report_deck("report_1", _payload()))
 
     assert marks == [("report_1", "failed", "Dify timeout", None)]
+
+
+def test_generate_report_revision_uses_existing_deck(monkeypatch):
+    calls: list[tuple[str, object]] = []
+    base_deck = {"slides": [{"slide_type": "cover", "speaker_notes": "old"}]}
+    revised_deck = {"slides": [{"slide_type": "cover", "speaker_notes": "new"}]}
+
+    def fake_report_row(report_id):
+        return {
+            "id": report_id,
+            "reporter_name": "MAG",
+            "report_period": "2026/08/24 - 2026/08/30",
+            "report_date": "2026/08/27",
+        }
+
+    async def fake_revise_deck_from_dify(**kwargs):
+        calls.append(("dify", kwargs["current_deck_json"]))
+        calls.append(("note", kwargs["revision_note"]))
+        return revised_deck
+
+    async def fake_persist_preview_assets(deck_json, preview_images, report_id):
+        calls.append(("persist", report_id))
+        return deck_json, preview_images
+
+    def fake_insert_report_version(report_id, deck_json, source):
+        calls.append(("version", (deck_json, source)))
+        return "rv_2"
+
+    def fake_mark_report_generation(report_id, status, error, version_id):
+        calls.append(("mark", (status, error, version_id)))
+
+    monkeypatch.setattr(main, "_report_row", fake_report_row)
+    monkeypatch.setattr(main, "revise_deck_from_dify", fake_revise_deck_from_dify)
+    monkeypatch.setattr(main, "persist_preview_assets", fake_persist_preview_assets)
+    monkeypatch.setattr(main, "_insert_report_version", fake_insert_report_version)
+    monkeypatch.setattr(main, "_mark_report_generation", fake_mark_report_generation)
+
+    asyncio.run(
+        main.generate_report_revision(
+            "report_1",
+            ReportRevisionCreate(revision_note="改得更正式"),
+            base_deck,
+        )
+    )
+
+    assert calls == [
+        ("dify", base_deck),
+        ("note", "改得更正式"),
+        ("persist", "report_1"),
+        ("version", (revised_deck, "dify_revision")),
+        ("mark", ("ready", None, "rv_2")),
+    ]
 
 
 def test_report_patch_accepts_legacy_frontend_source():

@@ -9,12 +9,13 @@ from fastapi.staticfiles import StaticFiles
 from . import db
 from .asset_store import ensure_slide_images, persist_preview_assets
 from .config import get_settings
-from .dify_client import create_deck_from_dify
+from .dify_client import create_deck_from_dify, revise_deck_from_dify
 from .orchestrator import create_video_job, run_video_job, utc_now
 from .schemas import (
     ReportCreate,
     ReportOut,
     ReportPatch,
+    ReportRevisionCreate,
     ReportVersionOut,
     VideoJobCreate,
     VideoJobDetailOut,
@@ -143,6 +144,58 @@ async def patch_report(report_id: str, payload: ReportPatch) -> ReportOut:
             )
 
     return _get_report_or_404(report_id, version_id)
+
+
+@app.post(
+    "/reports/{report_id}/revision",
+    response_model=ReportOut,
+    dependencies=[Depends(require_api_key), Depends(ensure_db_ready)],
+)
+def revise_report(
+    report_id: str,
+    payload: ReportRevisionCreate,
+    background_tasks: BackgroundTasks,
+) -> ReportOut:
+    report = _report_row(report_id)
+    version_id = report["current_version_id"]
+    if not version_id:
+        raise HTTPException(status_code=409, detail="Report deck is still generating.")
+
+    base_deck_json = payload.deck_json
+    if base_deck_json is None:
+        version = _version_row(str(version_id))
+        base_deck_json = db.loads(version["deck_json"])
+
+    _mark_report_generation(report_id, "revising", None, None)
+    background_tasks.add_task(
+        generate_report_revision,
+        report_id,
+        payload,
+        base_deck_json,
+    )
+    return _get_report_or_404(report_id)
+
+
+async def generate_report_revision(
+    report_id: str,
+    payload: ReportRevisionCreate,
+    base_deck_json: dict[str, Any],
+) -> None:
+    try:
+        report = _report_row(report_id)
+        deck_json = await revise_deck_from_dify(
+            reporter_name=str(report["reporter_name"]),
+            report_period=str(report["report_period"]),
+            report_date=str(report["report_date"]),
+            current_deck_json=base_deck_json,
+            revision_note=payload.revision_note,
+            user_id=report_id,
+        )
+        deck_json, _ = await persist_preview_assets(deck_json, payload.preview_images, report_id)
+        version_id = _insert_report_version(report_id, deck_json, "dify_revision")
+        _mark_report_generation(report_id, "ready", None, version_id)
+    except Exception as exc:
+        _mark_report_generation(report_id, "failed", str(exc), None)
 
 
 @app.post(

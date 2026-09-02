@@ -18,6 +18,12 @@ class ReportPatch(BaseModel):
     source: Literal["frontend_edit", "dify_revision", "ppt2video_frontend_editor"] = "frontend_edit"
 
 
+class ReportRevisionCreate(BaseModel):
+    revision_note: str = Field(min_length=1)
+    deck_json: dict[str, Any] | None = None
+    preview_images: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class ReportVersionOut(BaseModel):
     id: str
     version: int
