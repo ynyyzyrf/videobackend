@@ -28,7 +28,7 @@ async def persist_preview_assets(
             preview_images = [image for image in deck_preview_images if isinstance(image, dict)]
 
     if not preview_images:
-        return ensure_slide_images(deck_json, report_id), []
+        return deck_json, []
 
     persisted_images: list[dict[str, Any]] = []
     url_by_index: dict[int, str] = {}
@@ -50,7 +50,7 @@ async def persist_preview_assets(
             url_by_index[slide_index] = stored_url
 
     if not url_by_index:
-        return ensure_slide_images(deck_json, report_id), preview_images
+        return deck_json, preview_images
 
     slides = deck_json.get("slides")
     if isinstance(slides, list):
@@ -62,7 +62,7 @@ async def persist_preview_assets(
                 next_slides.append(slide)
         deck_json = {**deck_json, "slides": next_slides}
 
-    return ensure_slide_images({**deck_json, "preview_images": persisted_images}, report_id), persisted_images
+    return {**deck_json, "preview_images": persisted_images}, persisted_images
 
 
 def ensure_slide_images(deck_json: dict[str, Any], report_id: str) -> dict[str, Any]:

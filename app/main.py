@@ -161,10 +161,6 @@ def start_video_job(
         raise HTTPException(status_code=409, detail="Report deck is still generating.")
     version = _version_row(str(version_id))
     deck_json = ensure_slide_images(db.loads(version["deck_json"]), report_id)
-    db.execute(
-        "UPDATE report_versions SET deck_json = CAST(%s AS JSON) WHERE id = %s",
-        (db.dumps(deck_json), str(version_id)),
-    )
 
     try:
         job_id = create_video_job(report_id, str(version_id), deck_json)

@@ -136,9 +136,6 @@ def test_start_video_job_ensures_slide_images(monkeypatch):
             ]
         }
 
-    def fake_execute(query, params):
-        calls.append(("execute", params[1]))
-
     def fake_create_video_job(report_id, version_id, deck_json):
         calls.append(("create", deck_json["slides"][0]["image_url"]))
         return "job_1"
@@ -160,8 +157,6 @@ def test_start_video_job_ensures_slide_images(monkeypatch):
     monkeypatch.setattr(main, "_version_row", fake_version_row)
     monkeypatch.setattr(main, "ensure_slide_images", fake_ensure_slide_images)
     monkeypatch.setattr(main.db, "loads", lambda value: value)
-    monkeypatch.setattr(main.db, "dumps", lambda value: "{}")
-    monkeypatch.setattr(main.db, "execute", fake_execute)
     monkeypatch.setattr(main, "create_video_job", fake_create_video_job)
     monkeypatch.setattr(main, "_get_video_job_or_404", fake_get_video_job)
 
@@ -170,6 +165,5 @@ def test_start_video_job_ensures_slide_images(monkeypatch):
     assert job.id == "job_1"
     assert calls == [
         ("ensure", "report_1"),
-        ("execute", "rv_1"),
         ("create", "https://backend.example/assets/previews/report_1/slide_0_generated.png"),
     ]

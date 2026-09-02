@@ -3,7 +3,7 @@ import asyncio
 from app import asset_store
 
 
-def test_persist_preview_assets_generates_missing_slide_images(tmp_path, monkeypatch):
+def test_persist_preview_assets_does_not_generate_missing_slide_images(tmp_path, monkeypatch):
     monkeypatch.setattr(asset_store.get_settings(), "asset_storage_dir", str(tmp_path))
     monkeypatch.setattr(asset_store.get_settings(), "public_base_url", "https://backend.example")
 
@@ -23,10 +23,32 @@ def test_persist_preview_assets_generates_missing_slide_images(tmp_path, monkeyp
         )
     )
 
+    assert "image_url" not in deck_json["slides"][0]
+    assert "preview_images" not in deck_json
+    assert preview_images == []
+    assert not (tmp_path / "previews" / "report_1" / "slide_0_generated.png").exists()
+
+
+def test_ensure_slide_images_generates_video_fallback_images(tmp_path, monkeypatch):
+    monkeypatch.setattr(asset_store.get_settings(), "asset_storage_dir", str(tmp_path))
+    monkeypatch.setattr(asset_store.get_settings(), "public_base_url", "https://backend.example")
+
+    deck_json = asset_store.ensure_slide_images(
+        {
+            "slides": [
+                {
+                    "slide_type": "cover",
+                    "title": "項目週匯報",
+                    "speaker_notes": "開場旁白",
+                }
+            ]
+        },
+        "report_1",
+    )
+
     image_url = deck_json["slides"][0]["image_url"]
     assert image_url == "https://backend.example/assets/previews/report_1/slide_0_generated.png"
     assert deck_json["preview_images"][0]["generated"] is True
-    assert preview_images == []
     assert (tmp_path / "previews" / "report_1" / "slide_0_generated.png").exists()
 
 
