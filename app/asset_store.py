@@ -1,4 +1,5 @@
 import hashlib
+import base64
 import mimetypes
 from pathlib import Path
 from typing import Any
@@ -44,7 +45,10 @@ async def persist_preview_assets(
             source_url = str(image.get("url") or "").strip()
             if not source_url:
                 continue
-            stored_url = await _download_asset(client, source_url, report_id, slide_index)
+            if source_url.startswith("data:image/"):
+                stored_url = _store_data_url_asset(source_url, report_id, slide_index)
+            else:
+                stored_url = await _download_asset(client, source_url, report_id, slide_index)
             next_image = {**image, "source_url": source_url, "url": stored_url}
             persisted_images.append(next_image)
             url_by_index[slide_index] = stored_url
@@ -203,6 +207,22 @@ async def _download_asset(
     absolute_path.parent.mkdir(parents=True, exist_ok=True)
     absolute_path.write_bytes(response.content)
 
+    return public_asset_url("assets/" + relative_path.as_posix())
+
+
+def _store_data_url_asset(source_url: str, report_id: str, slide_index: int) -> str:
+    header, separator, encoded = source_url.partition(",")
+    if not separator or ";base64" not in header:
+        raise ValueError("Preview image data URL must be base64 encoded.")
+
+    content_type = header.removeprefix("data:").split(";")[0].strip()
+    suffix = mimetypes.guess_extension(content_type) or ".png"
+    content = base64.b64decode(encoded, validate=True)
+    digest = hashlib.sha256(content).hexdigest()[:16]
+    relative_path = Path("previews") / report_id / f"slide_{slide_index}_{digest}{suffix}"
+    absolute_path = Path(get_settings().asset_storage_dir) / relative_path
+    absolute_path.parent.mkdir(parents=True, exist_ok=True)
+    absolute_path.write_bytes(content)
     return public_asset_url("assets/" + relative_path.as_posix())
 
 
