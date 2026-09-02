@@ -59,6 +59,9 @@ uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8010}
 Zeabur should expose the platform-provided HTTP port. The app listens on `PORT`
 inside the container and falls back to `8010` only for local/manual runs.
 
+A `Dockerfile` is also included. If Zeabur uses Docker deployment, it runs the
+same command and reads the same `PORT` environment variable.
+
 Required environment variables:
 
 ```text

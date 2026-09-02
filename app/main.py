@@ -21,6 +21,14 @@ from .schemas import (
 
 app = FastAPI(title="Weekly Report Backend", version="0.1.0")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+startup_db_error: str | None = None
+
+
+def ensure_db_ready() -> None:
+    try:
+        db.init_db()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Database is not ready.") from exc
 
 
 def require_api_key(api_key: str | None = Depends(api_key_header)) -> None:
@@ -33,15 +41,24 @@ def require_api_key(api_key: str | None = Depends(api_key_header)) -> None:
 
 @app.on_event("startup")
 def startup() -> None:
-    db.init_db()
+    global startup_db_error
+    try:
+        db.init_db()
+        startup_db_error = None
+    except Exception as exc:
+        startup_db_error = str(exc)
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "database": "ok" if startup_db_error is None else "not_ready"}
 
 
-@app.post("/reports", response_model=ReportOut, dependencies=[Depends(require_api_key)])
+@app.post(
+    "/reports",
+    response_model=ReportOut,
+    dependencies=[Depends(require_api_key), Depends(ensure_db_ready)],
+)
 async def create_report(payload: ReportCreate) -> ReportOut:
     report_id = "report_" + uuid.uuid4().hex
     now = utc_now()
@@ -66,12 +83,20 @@ async def create_report(payload: ReportCreate) -> ReportOut:
     return _get_report_or_404(report_id, version_id)
 
 
-@app.get("/reports/{report_id}", response_model=ReportOut, dependencies=[Depends(require_api_key)])
+@app.get(
+    "/reports/{report_id}",
+    response_model=ReportOut,
+    dependencies=[Depends(require_api_key), Depends(ensure_db_ready)],
+)
 def get_report(report_id: str) -> ReportOut:
     return _get_report_or_404(report_id)
 
 
-@app.patch("/reports/{report_id}", response_model=ReportOut, dependencies=[Depends(require_api_key)])
+@app.patch(
+    "/reports/{report_id}",
+    response_model=ReportOut,
+    dependencies=[Depends(require_api_key), Depends(ensure_db_ready)],
+)
 def patch_report(report_id: str, payload: ReportPatch) -> ReportOut:
     report = db.fetchone("SELECT * FROM reports WHERE id = %s", (report_id,))
     if not report:
@@ -102,7 +127,11 @@ def patch_report(report_id: str, payload: ReportPatch) -> ReportOut:
     return _get_report_or_404(report_id, version_id)
 
 
-@app.post("/reports/{report_id}/video", response_model=VideoJobOut, dependencies=[Depends(require_api_key)])
+@app.post(
+    "/reports/{report_id}/video",
+    response_model=VideoJobOut,
+    dependencies=[Depends(require_api_key), Depends(ensure_db_ready)],
+)
 def start_video_job(
     report_id: str,
     payload: VideoJobCreate,
@@ -122,7 +151,11 @@ def start_video_job(
     return _get_video_job_or_404(job_id)
 
 
-@app.get("/video-jobs/{job_id}", response_model=VideoJobDetailOut, dependencies=[Depends(require_api_key)])
+@app.get(
+    "/video-jobs/{job_id}",
+    response_model=VideoJobDetailOut,
+    dependencies=[Depends(require_api_key), Depends(ensure_db_ready)],
+)
 def get_video_job(job_id: str) -> VideoJobDetailOut:
     return _get_video_job_or_404(job_id, include_items=True)
 
