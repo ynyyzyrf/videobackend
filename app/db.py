@@ -43,6 +43,42 @@ def init_db() -> None:
         with conn.cursor() as cursor:
             for statement in _schema_statements():
                 cursor.execute(statement)
+            _ensure_report_generation_columns(cursor)
+
+
+def _ensure_report_generation_columns(cursor: Any) -> None:
+    columns = {
+        row["COLUMN_NAME"]
+        for row in _fetch_columns(cursor, "reports")
+    }
+    if "generation_status" not in columns:
+        cursor.execute(
+            """
+            ALTER TABLE reports
+            ADD COLUMN generation_status VARCHAR(32) NOT NULL DEFAULT 'ready'
+            AFTER current_version_id
+            """
+        )
+    if "generation_error" not in columns:
+        cursor.execute(
+            """
+            ALTER TABLE reports
+            ADD COLUMN generation_error TEXT NULL
+            AFTER generation_status
+            """
+        )
+
+
+def _fetch_columns(cursor: Any, table_name: str) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT COLUMN_NAME
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s
+        """,
+        (table_name,),
+    )
+    return list(cursor.fetchall())
 
 
 def _schema_statements() -> list[str]:
@@ -55,6 +91,8 @@ def _schema_statements() -> list[str]:
           report_date VARCHAR(64) NOT NULL,
           raw_content MEDIUMTEXT NOT NULL,
           current_version_id VARCHAR(64) NULL,
+          generation_status VARCHAR(32) NOT NULL DEFAULT 'ready',
+          generation_error TEXT NULL,
           created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           INDEX idx_reports_current_version (current_version_id)

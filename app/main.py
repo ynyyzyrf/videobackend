@@ -64,31 +64,38 @@ def health() -> dict[str, str]:
     response_model=ReportOut,
     dependencies=[Depends(require_api_key), Depends(ensure_db_ready)],
 )
-async def create_report(payload: ReportCreate) -> ReportOut:
+async def create_report(payload: ReportCreate, background_tasks: BackgroundTasks) -> ReportOut:
     report_id = "report_" + uuid.uuid4().hex
     now = utc_now()
     deck_json = payload.deck_json
-    source = "frontend"
 
     if deck_json is None:
-        try:
-            deck_json = await create_deck_from_dify(
-                reporter_name=payload.reporter_name,
-                report_period=payload.report_period,
-                report_date=payload.report_date,
-                raw_content=payload.raw_content,
-                user_id="report_" + report_id,
-            )
-            source = "dify"
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        _insert_report_shell(report_id, payload, now, "generating")
+        background_tasks.add_task(generate_report_deck, report_id, payload)
+        return _get_report_or_404(report_id)
 
     try:
         deck_json, _ = await persist_preview_assets(deck_json, payload.preview_images, report_id)
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Preview asset persistence failed.") from exc
-    version_id = _insert_report_with_version(report_id, payload, deck_json, source, now)
+    version_id = _insert_report_with_version(report_id, payload, deck_json, "frontend", now)
     return _get_report_or_404(report_id, version_id)
+
+
+async def generate_report_deck(report_id: str, payload: ReportCreate) -> None:
+    try:
+        deck_json = await create_deck_from_dify(
+            reporter_name=payload.reporter_name,
+            report_period=payload.report_period,
+            report_date=payload.report_date,
+            raw_content=payload.raw_content,
+            user_id=report_id,
+        )
+        deck_json, _ = await persist_preview_assets(deck_json, payload.preview_images, report_id)
+        version_id = _insert_report_version(report_id, deck_json, "dify")
+        _mark_report_generation(report_id, "ready", None, version_id)
+    except Exception as exc:
+        _mark_report_generation(report_id, "failed", str(exc), None)
 
 
 @app.get(
@@ -150,6 +157,8 @@ def start_video_job(
 ) -> VideoJobOut:
     report = _report_row(report_id)
     version_id = payload.report_version_id or report["current_version_id"]
+    if not version_id:
+        raise HTTPException(status_code=409, detail="Report deck is still generating.")
     version = _version_row(str(version_id))
     deck_json = db.loads(version["deck_json"])
 
@@ -184,8 +193,19 @@ def _insert_report_with_version(
             cursor.execute(
                 """
                 INSERT INTO reports
-                (id, reporter_name, report_period, report_date, raw_content, current_version_id, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (
+                    id,
+                    reporter_name,
+                    report_period,
+                    report_date,
+                    raw_content,
+                    current_version_id,
+                    generation_status,
+                    generation_error,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, 'ready', NULL, %s, %s)
                 """,
                 (
                     report_id,
@@ -206,6 +226,94 @@ def _insert_report_with_version(
                 (version_id, report_id, db.dumps(deck_json), source, now),
             )
     return version_id
+
+
+def _insert_report_shell(
+    report_id: str,
+    payload: ReportCreate,
+    now: str,
+    status: str,
+) -> None:
+    with db.connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO reports
+                (
+                    id,
+                    reporter_name,
+                    report_period,
+                    report_date,
+                    raw_content,
+                    current_version_id,
+                    generation_status,
+                    generation_error,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, NULL, %s, NULL, %s, %s)
+                """,
+                (
+                    report_id,
+                    payload.reporter_name,
+                    payload.report_period,
+                    payload.report_date,
+                    payload.raw_content,
+                    status,
+                    now,
+                    now,
+                ),
+            )
+
+
+def _insert_report_version(report_id: str, deck_json: dict[str, Any], source: str) -> str:
+    row = db.fetchone(
+        "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM report_versions WHERE report_id = %s",
+        (report_id,),
+    )
+    version = int((row or {}).get("next_version") or 1)
+    version_id = "rv_" + uuid.uuid4().hex
+    with db.connect() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO report_versions (id, report_id, version, deck_json, source, created_at)
+                VALUES (%s, %s, %s, CAST(%s AS JSON), %s, %s)
+                """,
+                (version_id, report_id, version, db.dumps(deck_json), source, utc_now()),
+            )
+    return version_id
+
+
+def _mark_report_generation(
+    report_id: str,
+    status: str,
+    error: str | None,
+    version_id: str | None,
+) -> None:
+    if version_id:
+        db.execute(
+            """
+            UPDATE reports
+            SET generation_status = %s,
+                generation_error = %s,
+                current_version_id = %s,
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (status, error, version_id, utc_now(), report_id),
+        )
+        return
+    db.execute(
+        """
+        UPDATE reports
+        SET generation_status = %s,
+            generation_error = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (status, error, utc_now(), report_id),
+    )
 
 
 def _report_row(report_id: str) -> dict[str, Any]:
@@ -249,6 +357,8 @@ def _get_report_or_404(report_id: str, version_id: str | None = None) -> ReportO
         report_period=report["report_period"],
         report_date=report["report_date"],
         raw_content=report["raw_content"],
+        status=report.get("generation_status") or "ready",
+        error=report.get("generation_error"),
         current_version=current_version,
         created_at=str(report["created_at"]),
         updated_at=str(report["updated_at"]),

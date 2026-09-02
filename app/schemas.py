@@ -32,6 +32,8 @@ class ReportOut(BaseModel):
     report_period: str
     report_date: str
     raw_content: str
+    status: str
+    error: str | None
     current_version: ReportVersionOut | None
     created_at: str
     updated_at: str
