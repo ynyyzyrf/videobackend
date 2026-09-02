@@ -83,7 +83,12 @@ async def concat_videos(video_urls: list[str]) -> str:
 
     async with httpx.AsyncClient(timeout=300) as client:
         response = await client.post(settings.ffmpeg_api_url, headers=headers, json=payload)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 401:
+                raise RuntimeError("FFMPEG_API_KEY is invalid or unauthorized.") from exc
+            raise
         data = response.json()
 
     return _extract_output_url(data)
