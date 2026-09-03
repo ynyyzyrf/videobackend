@@ -80,6 +80,7 @@ async def _stream_dify_answer(
 ) -> tuple[str, str]:
     chunks: list[str] = []
     conversation_id = ""
+    events: list[str] = []
     async with httpx.AsyncClient(timeout=180) as client:
         async with client.stream("POST", url, json=payload, headers=headers) as response:
             if not response.is_success:
@@ -96,9 +97,17 @@ async def _stream_dify_answer(
                         for key in ("status", "code", "message")
                         if chunk.get(key) not in (None, "")
                     ]
-                    raise RuntimeError(
-                        "Dify stream error" + (": " + ", ".join(details) if details else "")
+                    error = "Dify stream error" + (
+                        ": " + ", ".join(details) if details else ""
                     )
+                    if events:
+                        error += "; events=" + " > ".join(events)
+                    raise RuntimeError(error)
+                event = chunk.get("event")
+                if isinstance(event, str) and len(events) < 30:
+                    data = chunk.get("data")
+                    title = data.get("title") if isinstance(data, dict) else None
+                    events.append(f"{event}({title})" if title else event)
                 chunk_conversation_id = chunk.get("conversation_id")
                 if isinstance(chunk_conversation_id, str) and chunk_conversation_id:
                     conversation_id = chunk_conversation_id

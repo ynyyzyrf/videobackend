@@ -91,9 +91,13 @@ def test_stream_dify_answer_includes_error_event_details(monkeypatch):
     original_async_client = httpx.AsyncClient
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        body = (
-            'data: {"event":"error","status":500,"code":"provider_error",'
-            '"message":"Model provider failed"}\n\n'
+        body = "\n\n".join(
+            [
+                'data: {"event":"workflow_started"}',
+                'data: {"event":"node_started","data":{"title":"02_文字結構化"}}',
+                'data: {"event":"error","status":500,"code":"provider_error",'
+                '"message":"Model provider failed"}',
+            ]
         )
         return httpx.Response(
             200,
@@ -116,7 +120,11 @@ def test_stream_dify_answer_includes_error_event_details(monkeypatch):
 
     with pytest.raises(
         RuntimeError,
-        match="Dify stream error: status=500, code=provider_error, message=Model provider failed",
+        match=(
+            "Dify stream error: status=500, code=provider_error, "
+            "message=Model provider failed; events=workflow_started > "
+            "node_started\\(02_文字結構化\\)"
+        ),
     ):
         asyncio.run(
             dify_client._stream_dify_answer(
