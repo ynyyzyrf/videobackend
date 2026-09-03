@@ -18,6 +18,8 @@ DaoStore frontend:
 
 This backend:
 - Persist reports, deck versions, video jobs, and per-slide video tasks.
+- Persist one operation log for each report creation, AI revision, and video-generation request.
+- Attribute cost operations with an independent `operator.user_id` and `operator.display_name`.
 - Call Dify for AI-only work: raw text to `deck_json`, revisions, and `speaker_notes`.
 - Submit each slide to Video Composer.
 - Poll Video Composer, retry failed slide tasks, preserve slide order.
@@ -40,7 +42,7 @@ GET /video-jobs/{job_id}
 ## Local Run
 
 ```powershell
-cd C:\Users\ynyyzyrf\Desktop\video\_backend
+cd C:\Users\ynyyzyrf\Desktop\video_backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .

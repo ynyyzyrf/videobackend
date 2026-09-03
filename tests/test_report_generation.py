@@ -3,6 +3,7 @@ import asyncio
 from fastapi import BackgroundTasks
 
 from app import main
+from app.dify_client import DifyDeckResult
 from app.schemas import (
     ReportCreate,
     ReportOut,
@@ -50,6 +51,7 @@ def test_create_report_without_deck_returns_before_dify(monkeypatch):
     monkeypatch.setattr(main, "create_deck_from_dify", fail_if_called)
     monkeypatch.setattr(main, "_insert_report_shell", fake_insert_report_shell)
     monkeypatch.setattr(main, "_get_report_or_404", fake_get_report)
+    monkeypatch.setattr(main, "_record_operation", lambda **_kwargs: None)
 
     background_tasks = BackgroundTasks()
     report = asyncio.run(main.create_report(_payload(), background_tasks))
@@ -65,7 +67,10 @@ def test_generate_report_deck_marks_report_ready(monkeypatch):
 
     async def fake_create_deck_from_dify(**_kwargs):
         calls.append(("dify", None))
-        return {"slides": [{"slide_type": "cover", "speaker_notes": "ok"}]}
+        return DifyDeckResult(
+            deck_json={"slides": [{"slide_type": "cover", "speaker_notes": "ok"}]},
+            conversation_id="conv-123",
+        )
 
     async def fake_persist_preview_assets(deck_json, preview_images, report_id):
         calls.append(("persist", report_id))
@@ -75,8 +80,8 @@ def test_generate_report_deck_marks_report_ready(monkeypatch):
         calls.append(("version", source))
         return "rv_1"
 
-    def fake_mark_report_generation(report_id, status, error, version_id):
-        calls.append(("mark", (report_id, status, error, version_id)))
+    def fake_mark_report_generation(report_id, status, error, version_id, conversation_id=None):
+        calls.append(("mark", (report_id, status, error, version_id, conversation_id)))
 
     monkeypatch.setattr(main, "create_deck_from_dify", fake_create_deck_from_dify)
     monkeypatch.setattr(main, "persist_preview_assets", fake_persist_preview_assets)
@@ -89,7 +94,7 @@ def test_generate_report_deck_marks_report_ready(monkeypatch):
         ("dify", None),
         ("persist", "report_1"),
         ("version", "dify"),
-        ("mark", ("report_1", "ready", None, "rv_1")),
+        ("mark", ("report_1", "ready", None, "rv_1", "conv-123")),
     ]
 
 
@@ -121,12 +126,14 @@ def test_generate_report_revision_uses_existing_deck(monkeypatch):
             "reporter_name": "MAG",
             "report_period": "2026/08/24 - 2026/08/30",
             "report_date": "2026/08/27",
+            "dify_conversation_id": "conv-123",
         }
 
     async def fake_revise_deck_from_dify(**kwargs):
         calls.append(("dify", kwargs["current_deck_json"]))
         calls.append(("note", kwargs["revision_note"]))
-        return revised_deck
+        calls.append(("conversation", kwargs["conversation_id"]))
+        return DifyDeckResult(deck_json=revised_deck, conversation_id="conv-123")
 
     async def fake_persist_preview_assets(deck_json, preview_images, report_id):
         calls.append(("persist", report_id))
@@ -136,8 +143,8 @@ def test_generate_report_revision_uses_existing_deck(monkeypatch):
         calls.append(("version", (deck_json, source)))
         return "rv_2"
 
-    def fake_mark_report_generation(report_id, status, error, version_id):
-        calls.append(("mark", (status, error, version_id)))
+    def fake_mark_report_generation(report_id, status, error, version_id, conversation_id=None):
+        calls.append(("mark", (status, error, version_id, conversation_id)))
 
     monkeypatch.setattr(main, "_report_row", fake_report_row)
     monkeypatch.setattr(main, "revise_deck_from_dify", fake_revise_deck_from_dify)
@@ -156,9 +163,10 @@ def test_generate_report_revision_uses_existing_deck(monkeypatch):
     assert calls == [
         ("dify", base_deck),
         ("note", "改得更正式"),
+        ("conversation", "conv-123"),
         ("persist", "report_1"),
         ("version", (revised_deck, "dify_revision")),
-        ("mark", ("ready", None, "rv_2")),
+        ("mark", ("ready", None, "rv_2", "conv-123")),
     ]
 
 
@@ -218,6 +226,7 @@ def test_start_video_job_ensures_slide_images(monkeypatch):
     monkeypatch.setattr(main.db, "loads", lambda value: value)
     monkeypatch.setattr(main, "create_video_job", fake_create_video_job)
     monkeypatch.setattr(main, "_get_video_job_or_404", fake_get_video_job)
+    monkeypatch.setattr(main, "_record_operation", lambda **_kwargs: None)
 
     job = main.start_video_job("report_1", VideoJobCreate(), BackgroundTasks())
 

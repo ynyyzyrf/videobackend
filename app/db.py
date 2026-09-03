@@ -67,6 +67,14 @@ def _ensure_report_generation_columns(cursor: Any) -> None:
             AFTER generation_status
             """
         )
+    if "dify_conversation_id" not in columns:
+        cursor.execute(
+            """
+            ALTER TABLE reports
+            ADD COLUMN dify_conversation_id VARCHAR(255) NULL
+            AFTER generation_error
+            """
+        )
 
 
 def _fetch_columns(cursor: Any, table_name: str) -> list[dict[str, Any]]:
@@ -93,6 +101,7 @@ def _schema_statements() -> list[str]:
           current_version_id VARCHAR(64) NULL,
           generation_status VARCHAR(32) NOT NULL DEFAULT 'ready',
           generation_error TEXT NULL,
+          dify_conversation_id VARCHAR(255) NULL,
           created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           INDEX idx_reports_current_version (current_version_id)
@@ -156,6 +165,20 @@ def _schema_statements() -> list[str]:
           CONSTRAINT fk_video_job_items_job
             FOREIGN KEY (job_id) REFERENCES video_jobs(id)
             ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS operation_logs (
+          id VARCHAR(64) PRIMARY KEY,
+          user_id VARCHAR(255) NOT NULL,
+          display_name VARCHAR(255) NOT NULL,
+          action VARCHAR(64) NOT NULL,
+          resource_type VARCHAR(64) NOT NULL,
+          resource_id VARCHAR(64) NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_operation_logs_user (user_id),
+          INDEX idx_operation_logs_action (action),
+          INDEX idx_operation_logs_created (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """,
     ]

@@ -1,5 +1,6 @@
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -8,6 +9,12 @@ from .config import get_settings
 
 PREVIEW_START = "<ppt2video-preview-json>"
 PREVIEW_END = "</ppt2video-preview-json>"
+
+
+@dataclass(frozen=True)
+class DifyDeckResult:
+    deck_json: dict[str, Any]
+    conversation_id: str
 
 
 def extract_deck_json(answer: str) -> dict[str, Any]:
@@ -39,7 +46,8 @@ async def create_deck_from_dify(
     report_date: str,
     raw_content: str,
     user_id: str,
-) -> dict[str, Any]:
+    conversation_id: str = "",
+) -> DifyDeckResult:
     settings = get_settings()
     if not settings.dify_api_key:
         raise RuntimeError("DIFY_API_KEY is not configured.")
@@ -53,21 +61,25 @@ async def create_deck_from_dify(
         },
         "query": raw_content,
         "response_mode": "streaming",
-        "conversation_id": "",
+        "conversation_id": conversation_id,
         "user": user_id,
     }
     headers = {"Authorization": "Bearer " + settings.dify_api_key}
 
-    answer = await _stream_dify_answer(url, payload, headers)
-    return extract_deck_json(answer)
+    answer, response_conversation_id = await _stream_dify_answer(url, payload, headers)
+    return DifyDeckResult(
+        deck_json=extract_deck_json(answer),
+        conversation_id=response_conversation_id or conversation_id,
+    )
 
 
 async def _stream_dify_answer(
     url: str,
     payload: dict[str, Any],
     headers: dict[str, str],
-) -> str:
+) -> tuple[str, str]:
     chunks: list[str] = []
+    conversation_id = ""
     async with httpx.AsyncClient(timeout=180) as client:
         async with client.stream("POST", url, json=payload, headers=headers) as response:
             response.raise_for_status()
@@ -78,10 +90,13 @@ async def _stream_dify_answer(
                 if chunk.get("event") == "error":
                     message = chunk.get("message") or chunk.get("code") or "Dify stream error"
                     raise RuntimeError(str(message))
+                chunk_conversation_id = chunk.get("conversation_id")
+                if isinstance(chunk_conversation_id, str) and chunk_conversation_id:
+                    conversation_id = chunk_conversation_id
                 answer = chunk.get("answer")
                 if isinstance(answer, str):
                     chunks.append(answer)
-    return "".join(chunks)
+    return "".join(chunks), conversation_id
 
 
 def _parse_dify_stream_line(line: str) -> dict[str, Any] | None:
@@ -106,17 +121,17 @@ async def revise_deck_from_dify(
     current_deck_json: dict[str, Any],
     revision_note: str,
     user_id: str,
-) -> dict[str, Any]:
-    query = (
-        "請基於下面既有 deck_json 修改周報 PPT，不要重新生成一套無關內容。\n"
-        "只根據用戶修改要求調整原有頁面的文案、項目內容與 speaker_notes；"
-        "除非修改要求明確需要新增或刪除項目，否則保持原本頁數與結構。\n\n"
-        "<current_deck_json>\n"
-        f"{json.dumps(current_deck_json, ensure_ascii=False)}\n"
-        "</current_deck_json>\n\n"
-        "<revision_note>\n"
-        f"{revision_note}\n"
-        "</revision_note>"
+    conversation_id: str,
+) -> DifyDeckResult:
+    query = json.dumps(
+        {
+            "source": "ppt2video_frontend_editor",
+            "version": 1,
+            "action": "regenerate_preview",
+            "deck_json": current_deck_json,
+            "revision_note": revision_note,
+        },
+        ensure_ascii=False,
     )
     return await create_deck_from_dify(
         reporter_name=reporter_name,
@@ -124,4 +139,5 @@ async def revise_deck_from_dify(
         report_date=report_date,
         raw_content=query,
         user_id=user_id,
+        conversation_id=conversation_id,
     )

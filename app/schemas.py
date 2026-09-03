@@ -3,6 +3,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class OperationActor(BaseModel):
+    user_id: str = Field(default="visitor", min_length=1)
+    display_name: str = Field(default="Visitor", min_length=1)
+
+
 class ReportCreate(BaseModel):
     reporter_name: str = Field(min_length=1)
     report_period: str = Field(min_length=1)
@@ -10,18 +15,21 @@ class ReportCreate(BaseModel):
     raw_content: str = ""
     deck_json: dict[str, Any] | None = None
     preview_images: list[dict[str, Any]] = Field(default_factory=list)
+    operator: OperationActor = Field(default_factory=OperationActor)
 
 
 class ReportPatch(BaseModel):
     deck_json: dict[str, Any]
     preview_images: list[dict[str, Any]] = Field(default_factory=list)
     source: Literal["frontend_edit", "dify_revision", "ppt2video_frontend_editor"] = "frontend_edit"
+    operator: OperationActor = Field(default_factory=OperationActor)
 
 
 class ReportRevisionCreate(BaseModel):
     revision_note: str = Field(min_length=1)
     deck_json: dict[str, Any] | None = None
     preview_images: list[dict[str, Any]] = Field(default_factory=list)
+    operator: OperationActor = Field(default_factory=OperationActor)
 
 
 class ReportVersionOut(BaseModel):
@@ -47,6 +55,7 @@ class ReportOut(BaseModel):
 
 class VideoJobCreate(BaseModel):
     report_version_id: str | None = None
+    operator: OperationActor = Field(default_factory=OperationActor)
 
 
 class VideoJobOut(BaseModel):

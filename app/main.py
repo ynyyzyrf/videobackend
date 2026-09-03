@@ -13,6 +13,7 @@ from .dify_client import create_deck_from_dify, revise_deck_from_dify
 from .orchestrator import create_video_job, run_video_job, utc_now
 from .schemas import (
     ReportCreate,
+    OperationActor,
     ReportOut,
     ReportPatch,
     ReportRevisionCreate,
@@ -72,6 +73,12 @@ async def create_report(payload: ReportCreate, background_tasks: BackgroundTasks
 
     if deck_json is None:
         _insert_report_shell(report_id, payload, now, "generating")
+        _record_operation(
+            operator=payload.operator,
+            action="create_report",
+            resource_type="report",
+            resource_id=report_id,
+        )
         background_tasks.add_task(generate_report_deck, report_id, payload)
         return _get_report_or_404(report_id)
 
@@ -80,21 +87,34 @@ async def create_report(payload: ReportCreate, background_tasks: BackgroundTasks
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Preview asset persistence failed.") from exc
     version_id = _insert_report_with_version(report_id, payload, deck_json, "frontend", now)
+    _record_operation(
+        operator=payload.operator,
+        action="create_report",
+        resource_type="report",
+        resource_id=report_id,
+    )
     return _get_report_or_404(report_id, version_id)
 
 
 async def generate_report_deck(report_id: str, payload: ReportCreate) -> None:
     try:
-        deck_json = await create_deck_from_dify(
+        dify_result = await create_deck_from_dify(
             reporter_name=payload.reporter_name,
             report_period=payload.report_period,
             report_date=payload.report_date,
             raw_content=payload.raw_content,
-            user_id=report_id,
+            user_id=payload.operator.user_id,
         )
+        deck_json = dify_result.deck_json
         deck_json, _ = await persist_preview_assets(deck_json, payload.preview_images, report_id)
         version_id = _insert_report_version(report_id, deck_json, "dify")
-        _mark_report_generation(report_id, "ready", None, version_id)
+        _mark_report_generation(
+            report_id,
+            "ready",
+            None,
+            version_id,
+            dify_result.conversation_id,
+        )
     except Exception as exc:
         _mark_report_generation(report_id, "failed", str(exc), None)
 
@@ -143,6 +163,12 @@ async def patch_report(report_id: str, payload: ReportPatch) -> ReportOut:
                 (version_id, utc_now(), report_id),
             )
 
+    _record_operation(
+        operator=payload.operator,
+        action="patch_report",
+        resource_type="report",
+        resource_id=report_id,
+    )
     return _get_report_or_404(report_id, version_id)
 
 
@@ -167,6 +193,12 @@ def revise_report(
         base_deck_json = db.loads(version["deck_json"])
 
     _mark_report_generation(report_id, "revising", None, None)
+    _record_operation(
+        operator=payload.operator,
+        action="revise_report",
+        resource_type="report",
+        resource_id=report_id,
+    )
     background_tasks.add_task(
         generate_report_revision,
         report_id,
@@ -183,17 +215,25 @@ async def generate_report_revision(
 ) -> None:
     try:
         report = _report_row(report_id)
-        deck_json = await revise_deck_from_dify(
+        dify_result = await revise_deck_from_dify(
             reporter_name=str(report["reporter_name"]),
             report_period=str(report["report_period"]),
             report_date=str(report["report_date"]),
             current_deck_json=base_deck_json,
             revision_note=payload.revision_note,
-            user_id=report_id,
+            user_id=payload.operator.user_id,
+            conversation_id=str(report.get("dify_conversation_id") or ""),
         )
+        deck_json = dify_result.deck_json
         deck_json, _ = await persist_preview_assets(deck_json, payload.preview_images, report_id)
         version_id = _insert_report_version(report_id, deck_json, "dify_revision")
-        _mark_report_generation(report_id, "ready", None, version_id)
+        _mark_report_generation(
+            report_id,
+            "ready",
+            None,
+            version_id,
+            dify_result.conversation_id,
+        )
     except Exception as exc:
         _mark_report_generation(report_id, "failed", str(exc), None)
 
@@ -220,6 +260,12 @@ def start_video_job(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    _record_operation(
+        operator=payload.operator,
+        action="generate_video",
+        resource_type="video_job",
+        resource_id=job_id,
+    )
     background_tasks.add_task(run_video_job, job_id)
     return _get_video_job_or_404(job_id)
 
@@ -343,6 +389,7 @@ def _mark_report_generation(
     status: str,
     error: str | None,
     version_id: str | None,
+    conversation_id: str | None = None,
 ) -> None:
     if version_id:
         db.execute(
@@ -351,10 +398,11 @@ def _mark_report_generation(
             SET generation_status = %s,
                 generation_error = %s,
                 current_version_id = %s,
+                dify_conversation_id = COALESCE(%s, dify_conversation_id),
                 updated_at = %s
             WHERE id = %s
             """,
-            (status, error, version_id, utc_now(), report_id),
+            (status, error, version_id, conversation_id, utc_now(), report_id),
         )
         return
     db.execute(
@@ -366,6 +414,31 @@ def _mark_report_generation(
         WHERE id = %s
         """,
         (status, error, utc_now(), report_id),
+    )
+
+
+def _record_operation(
+    *,
+    operator: OperationActor,
+    action: str,
+    resource_type: str,
+    resource_id: str | None,
+) -> None:
+    db.execute(
+        """
+        INSERT INTO operation_logs
+        (id, user_id, display_name, action, resource_type, resource_id, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            "op_" + uuid.uuid4().hex,
+            operator.user_id,
+            operator.display_name,
+            action,
+            resource_type,
+            resource_id,
+            utc_now(),
+        ),
     )
 
 

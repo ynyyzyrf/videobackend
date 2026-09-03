@@ -20,7 +20,7 @@ def test_create_deck_from_dify_uses_streaming_and_parses_sse(monkeypatch):
                 'data: {"event":"message","answer":"<ppt2video-preview-json>{\\"deck_json\\":{\\"slides\\":["}',
                 'data: {"event":"message","answer":"{\\"slide_type\\":\\"cover\\",\\"speaker_notes\\":\\"ok\\"}" }',
                 'data: {"event":"message","answer":"]}}</ppt2video-preview-json>"}',
-                'data: {"event":"message_end"}',
+                'data: {"event":"message_end","conversation_id":"conv-123"}',
             ]
         )
         return httpx.Response(
@@ -42,7 +42,7 @@ def test_create_deck_from_dify_uses_streaming_and_parses_sse(monkeypatch):
 
     monkeypatch.setattr(dify_client.httpx, "AsyncClient", FakeAsyncClient)
 
-    deck_json = asyncio.run(
+    result = asyncio.run(
         dify_client.create_deck_from_dify(
             reporter_name="MAG",
             report_period="2026/08/24 - 2026/08/30",
@@ -53,4 +53,34 @@ def test_create_deck_from_dify_uses_streaming_and_parses_sse(monkeypatch):
     )
 
     assert requests[0]["response_mode"] == "streaming"
-    assert deck_json["slides"][0]["speaker_notes"] == "ok"
+    assert result.deck_json["slides"][0]["speaker_notes"] == "ok"
+    assert result.conversation_id == "conv-123"
+
+
+def test_revise_deck_reuses_conversation_and_sends_editor_payload(monkeypatch):
+    captured: list[dict[str, object]] = []
+
+    async def fake_create_deck_from_dify(**kwargs):
+        captured.append(kwargs)
+        return dify_client.DifyDeckResult(deck_json={"slides": []}, conversation_id="conv-123")
+
+    monkeypatch.setattr(dify_client, "create_deck_from_dify", fake_create_deck_from_dify)
+
+    asyncio.run(
+        dify_client.revise_deck_from_dify(
+            reporter_name="MAG",
+            report_period="2026/08/24 - 2026/08/30",
+            report_date="2026/08/27",
+            current_deck_json={"slides": [{"title": "old"}]},
+            revision_note="改得更正式",
+            user_id="user-123",
+            conversation_id="conv-123",
+        )
+    )
+
+    request = captured[0]
+    query = json.loads(str(request["raw_content"]))
+    assert request["conversation_id"] == "conv-123"
+    assert query["source"] == "ppt2video_frontend_editor"
+    assert query["action"] == "regenerate_preview"
+    assert query["deck_json"]["slides"][0]["title"] == "old"
