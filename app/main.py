@@ -1,3 +1,4 @@
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from .schemas import (
 )
 
 app = FastAPI(title="Weekly Report Backend", version="0.1.0")
+logger = logging.getLogger(__name__)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 startup_db_error: str | None = None
 Path(get_settings().asset_storage_dir).mkdir(parents=True, exist_ok=True)
@@ -116,6 +118,7 @@ async def generate_report_deck(report_id: str, payload: ReportCreate) -> None:
             dify_result.conversation_id,
         )
     except Exception as exc:
+        logger.exception("Dify report generation failed for report_id=%s", report_id)
         _mark_report_generation(report_id, "failed", str(exc), None)
 
 
@@ -235,6 +238,7 @@ async def generate_report_revision(
             dify_result.conversation_id,
         )
     except Exception as exc:
+        logger.exception("Dify report revision failed for report_id=%s", report_id)
         _mark_report_generation(report_id, "failed", str(exc), None)
 
 

@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from app import dify_client
 
@@ -84,3 +85,78 @@ def test_revise_deck_reuses_conversation_and_sends_editor_payload(monkeypatch):
     assert query["source"] == "ppt2video_frontend_editor"
     assert query["action"] == "regenerate_preview"
     assert query["deck_json"]["slides"][0]["title"] == "old"
+
+
+def test_stream_dify_answer_includes_error_event_details(monkeypatch):
+    original_async_client = httpx.AsyncClient
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = (
+            'data: {"event":"error","status":500,"code":"provider_error",'
+            '"message":"Model provider failed"}\n\n'
+        )
+        return httpx.Response(
+            200,
+            content=body.encode("utf-8"),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.client = original_async_client(transport=httpx.MockTransport(handler))
+
+        async def __aenter__(self):
+            return self.client
+
+        async def __aexit__(self, exc_type, exc, tb):
+            await self.client.aclose()
+
+    monkeypatch.setattr(dify_client.httpx, "AsyncClient", FakeAsyncClient)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Dify stream error: status=500, code=provider_error, message=Model provider failed",
+    ):
+        asyncio.run(
+            dify_client._stream_dify_answer(
+                "https://dify.example/v1/chat-messages",
+                {"query": "hello"},
+                {"Authorization": "Bearer test-key"},
+            )
+        )
+
+
+def test_stream_dify_answer_includes_http_error_body(monkeypatch):
+    original_async_client = httpx.AsyncClient
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            500,
+            json={"code": "internal_server_error", "message": "workflow failed"},
+            request=request,
+        )
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.client = original_async_client(transport=httpx.MockTransport(handler))
+
+        async def __aenter__(self):
+            return self.client
+
+        async def __aexit__(self, exc_type, exc, tb):
+            await self.client.aclose()
+
+    monkeypatch.setattr(dify_client.httpx, "AsyncClient", FakeAsyncClient)
+
+    with pytest.raises(
+        RuntimeError,
+        match='Dify HTTP 500: {"code":"internal_server_error","message":"workflow failed"}',
+    ):
+        asyncio.run(
+            dify_client._stream_dify_answer(
+                "https://dify.example/v1/chat-messages",
+                {"query": "hello"},
+                {"Authorization": "Bearer test-key"},
+            )
+        )

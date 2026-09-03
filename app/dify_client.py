@@ -82,14 +82,23 @@ async def _stream_dify_answer(
     conversation_id = ""
     async with httpx.AsyncClient(timeout=180) as client:
         async with client.stream("POST", url, json=payload, headers=headers) as response:
-            response.raise_for_status()
+            if not response.is_success:
+                body = (await response.aread()).decode("utf-8", errors="replace")
+                body = body.strip().replace("\r", " ").replace("\n", " ")[:1000]
+                raise RuntimeError(f"Dify HTTP {response.status_code}: {body or response.reason_phrase}")
             async for line in response.aiter_lines():
                 chunk = _parse_dify_stream_line(line)
                 if chunk is None:
                     continue
                 if chunk.get("event") == "error":
-                    message = chunk.get("message") or chunk.get("code") or "Dify stream error"
-                    raise RuntimeError(str(message))
+                    details = [
+                        f"{key}={chunk[key]}"
+                        for key in ("status", "code", "message")
+                        if chunk.get(key) not in (None, "")
+                    ]
+                    raise RuntimeError(
+                        "Dify stream error" + (": " + ", ".join(details) if details else "")
+                    )
                 chunk_conversation_id = chunk.get("conversation_id")
                 if isinstance(chunk_conversation_id, str) and chunk_conversation_id:
                     conversation_id = chunk_conversation_id
