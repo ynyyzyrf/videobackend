@@ -103,7 +103,7 @@ async def generate_report_deck(report_id: str, payload: ReportCreate) -> None:
             report_period=payload.report_period,
             report_date=payload.report_date,
             raw_content=payload.raw_content,
-            user_id=payload.operator.user_id,
+            user_id=_dify_user(payload.operator),
         )
         deck_json = dify_result.deck_json
         deck_json, _ = await persist_preview_assets(deck_json, payload.preview_images, report_id)
@@ -221,7 +221,7 @@ async def generate_report_revision(
             report_date=str(report["report_date"]),
             current_deck_json=base_deck_json,
             revision_note=payload.revision_note,
-            user_id=payload.operator.user_id,
+            user_id=_dify_user(payload.operator),
             conversation_id=str(report.get("dify_conversation_id") or ""),
         )
         deck_json = dify_result.deck_json
@@ -440,6 +440,10 @@ def _record_operation(
             utc_now(),
         ),
     )
+
+
+def _dify_user(operator: OperationActor) -> str:
+    return f"{operator.display_name} [{operator.user_id}]"
 
 
 def _report_row(report_id: str) -> dict[str, Any]:

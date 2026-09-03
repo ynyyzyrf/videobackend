@@ -132,6 +132,7 @@ def test_generate_report_revision_uses_existing_deck(monkeypatch):
     async def fake_revise_deck_from_dify(**kwargs):
         calls.append(("dify", kwargs["current_deck_json"]))
         calls.append(("note", kwargs["revision_note"]))
+        calls.append(("user", kwargs["user_id"]))
         calls.append(("conversation", kwargs["conversation_id"]))
         return DifyDeckResult(deck_json=revised_deck, conversation_id="conv-123")
 
@@ -163,6 +164,7 @@ def test_generate_report_revision_uses_existing_deck(monkeypatch):
     assert calls == [
         ("dify", base_deck),
         ("note", "改得更正式"),
+        ("user", "Visitor [visitor]"),
         ("conversation", "conv-123"),
         ("persist", "report_1"),
         ("version", (revised_deck, "dify_revision")),

@@ -63,7 +63,7 @@ def test_create_report_logs_operator_once_and_uses_user_id_for_dify(monkeypatch)
     asyncio.run(tasks())
 
     assert report.status == "generating"
-    assert dify_users == ["user-123"]
+    assert dify_users == ["Mag.H [user-123]"]
     assert logs == [
         {
             "operator": payload.operator,
