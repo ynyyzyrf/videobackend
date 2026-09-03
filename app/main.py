@@ -450,7 +450,7 @@ def _dify_user(operator: OperationActor, fallback_display_name: str = "") -> str
     display_name = operator.display_name.strip()
     if display_name.lower() == "visitor" and fallback_display_name.strip():
         display_name = fallback_display_name.strip()
-    return f"{display_name} [{operator.user_id}]"
+    return display_name
 
 
 def _report_row(report_id: str) -> dict[str, Any]:

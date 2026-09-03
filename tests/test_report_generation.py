@@ -164,7 +164,7 @@ def test_generate_report_revision_uses_existing_deck(monkeypatch):
     assert calls == [
         ("dify", base_deck),
         ("note", "改得更正式"),
-        ("user", "MAG [visitor]"),
+        ("user", "MAG"),
         ("conversation", "conv-123"),
         ("persist", "report_1"),
         ("version", (revised_deck, "dify_revision")),
