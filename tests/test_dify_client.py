@@ -58,6 +58,38 @@ def test_create_deck_from_dify_uses_streaming_and_parses_sse(monkeypatch):
     assert result.conversation_id == "conv-123"
 
 
+def test_extract_deck_json_preserves_marker_preview_images():
+    answer = (
+        "<ppt2video-preview-json>"
+        + json.dumps(
+            {
+                "deck_json": {
+                    "slides": [
+                        {"slide_type": "cover", "title": "項目週匯報"},
+                        {"slide_type": "summary", "title": "總結"},
+                    ]
+                },
+                "preview_images": [
+                    {"slide_index": 0, "label": "封面", "url": "https://dify.example/cover.png"},
+                    {
+                        "slide_index": 1,
+                        "label": "總結頁",
+                        "url": "https://dify.example/summary.png",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "</ppt2video-preview-json>"
+    )
+
+    deck_json = dify_client.extract_deck_json(answer)
+
+    assert deck_json["preview_images"][0]["url"] == "https://dify.example/cover.png"
+    assert deck_json["slides"][0]["image_url"] == "https://dify.example/cover.png"
+    assert deck_json["slides"][1]["preview_image_url"] == "https://dify.example/summary.png"
+
+
 def test_revise_deck_reuses_conversation_and_sends_editor_payload(monkeypatch):
     captured: list[dict[str, object]] = []
 

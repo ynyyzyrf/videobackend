@@ -17,6 +17,42 @@ class DifyDeckResult:
     conversation_id: str
 
 
+def _merge_preview_images(
+    deck_json: dict[str, Any],
+    preview_images: Any,
+) -> dict[str, Any]:
+    if not isinstance(preview_images, list):
+        return deck_json
+
+    valid_images = [image for image in preview_images if isinstance(image, dict)]
+    if not valid_images:
+        return deck_json
+
+    next_deck = {**deck_json, "preview_images": valid_images}
+    slides = next_deck.get("slides")
+    if not isinstance(slides, list):
+        return next_deck
+
+    next_slides = []
+    images_by_index = {
+        image.get("slide_index"): image
+        for image in valid_images
+        if isinstance(image.get("slide_index"), int)
+    }
+    for index, slide in enumerate(slides):
+        if not isinstance(slide, dict):
+            next_slides.append(slide)
+            continue
+        image = images_by_index.get(index)
+        url = image.get("url") if isinstance(image, dict) else None
+        if isinstance(url, str) and url:
+            next_slides.append({**slide, "image_url": url, "preview_image_url": url})
+        else:
+            next_slides.append(slide)
+
+    return {**next_deck, "slides": next_slides}
+
+
 def extract_deck_json(answer: str) -> dict[str, Any]:
     start = answer.find(PREVIEW_START)
     if start >= 0:
@@ -26,13 +62,13 @@ def extract_deck_json(answer: str) -> dict[str, Any]:
             payload = json.loads(answer[content_start:end].strip())
             deck = payload.get("deck_json")
             if isinstance(deck, dict):
-                return deck
+                return _merge_preview_images(deck, payload.get("preview_images"))
 
     match = re.search(r"\{.*\}", answer, flags=re.S)
     if match:
         parsed = json.loads(match.group(0))
         if isinstance(parsed, dict) and isinstance(parsed.get("deck_json"), dict):
-            return parsed["deck_json"]
+            return _merge_preview_images(parsed["deck_json"], parsed.get("preview_images"))
         if isinstance(parsed, dict) and isinstance(parsed.get("slides"), list):
             return parsed
 
