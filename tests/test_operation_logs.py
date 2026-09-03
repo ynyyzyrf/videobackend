@@ -74,6 +74,10 @@ def test_create_report_logs_operator_once_and_uses_user_id_for_dify(monkeypatch)
     ]
 
 
+def test_dify_user_uses_reporter_name_when_operator_is_visitor():
+    assert main._dify_user(OperationActor(), "MAG") == "MAG [visitor]"
+
+
 def test_start_video_logs_one_user_operation(monkeypatch):
     logs: list[dict[str, object]] = []
     operator = OperationActor(user_id="user-123", display_name="Mag.H")
